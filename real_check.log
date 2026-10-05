@@ -1,0 +1,11 @@
+PASS CSV contains one line per audited student row  [{'VERIFIED': 23504, 'NOT_FOUND': 4646, 'VERIFIED_ALTERNATE_SOURCE': 2605, 'EXCLUDED': 1168, 'AMBIGUOUS': 15}]
+PASS audit sheet row counts equal CSV status counts  [{'Verified Matches': 23504, 'Alternate Source Matches': 2605, 'Unmatched Records': 4646, 'Ambiguous Records': 15}]
+PASS no registration number on NOT_FOUND / AMBIGUOUS / EXCLUDED rows
+PASS 225PST02 untouched: no row matched, no output workbook
+PASS every matched Reg.No re-found in raw source for the SAME subject (independent re-read)  [0 unconfirmed]
+PASS all 376 written workbooks keep sheet names and non-empty row counts  [0 problems]
+PASS release gate recorded as failed -> no official ZIP present
+PASS CORRECTED_WORKBOOKS_COMPLETE_ONLY.zip opens, no corrupt members  [340 members]
+PASS CORRECTED_WORKBOOKS_PARTIAL_NOT_FOR_RELEASE.zip opens, no corrupt members  [38 members]
+
+SUMMARY: 9 passed, 0 failed

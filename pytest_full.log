@@ -1,0 +1,43 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/claude/work/coe_app
+plugins: anyio-4.15.1
+collecting ... collected 34 items
+
+tests/test_app.py::test_upload_page_renders_without_exception PASSED     [  2%]
+tests/test_app.py::test_other_pages_ask_for_upload_first PASSED          [  5%]
+tests/test_app.py::test_all_pages_render_with_loaded_run PASSED          [  8%]
+tests/test_app.py::test_manual_correction_through_ui PASSED              [ 11%]
+tests/test_integration.py::test_expected_statuses_per_subject PASSED     [ 14%]
+tests/test_integration.py::test_nothing_crashes_and_problem_files_are_reported PASSED [ 17%]
+tests/test_integration.py::test_excluded_subject_not_modified_or_written PASSED [ 20%]
+tests/test_integration.py::test_no_cross_subject_assignment PASSED       [ 23%]
+tests/test_integration.py::test_corrupt_scientific_reg_never_used_when_good_copy_exists PASSED [ 26%]
+tests/test_integration.py::test_leading_zero_and_float_dummy_formats_match PASSED [ 29%]
+tests/test_integration.py::test_ambiguous_never_gets_registration PASSED [ 32%]
+tests/test_integration.py::test_output_layout_sort_and_marks_association PASSED [ 35%]
+tests/test_integration.py::test_unmatched_rows_listed_last_and_marked PASSED [ 38%]
+tests/test_integration.py::test_every_written_workbook_passed_independent_verification PASSED [ 41%]
+tests/test_integration.py::test_release_gate_blocks_official_zip PASSED  [ 44%]
+tests/test_integration.py::test_audit_workbook_has_required_sheets PASSED [ 47%]
+tests/test_integration.py::test_gate_passes_and_official_zip_created_for_clean_batch PASSED [ 50%]
+tests/test_integration.py::test_manual_correction_logged_and_requires_evidence PASSED [ 52%]
+tests/test_integration.py::test_duplicate_subject_code_conflict_is_not_silently_verified PASSED [ 55%]
+tests/test_integration.py::test_csv_and_audit_leave_blank_cells_blank PASSED [ 58%]
+tests/test_unit.py::test_dummy_key_formats PASSED                        [ 61%]
+tests/test_unit.py::test_hidden_characters_removed_for_comparison_only PASSED [ 64%]
+tests/test_unit.py::test_name_and_code_keys PASSED                       [ 67%]
+tests/test_unit.py::test_shift_formula PASSED                            [ 70%]
+tests/test_unit.py::test_eval_marks PASSED                               [ 73%]
+tests/test_unit.py::test_index_date_and_tokens PASSED                    [ 76%]
+tests/test_unit.py::test_path_date_session PASSED                        [ 79%]
+tests/test_unit.py::test_reg_problem_detects_scientific_notation PASSED  [ 82%]
+tests/test_unit.py::test_parse_headerless_and_header_csv PASSED          [ 85%]
+tests/test_unit.py::test_corrupt_and_lock_files_do_not_crash PASSED      [ 88%]
+tests/test_unit.py::test_zip_slip_blocked PASSED                         [ 91%]
+tests/test_unit.py::test_bad_zip_reported_not_raised PASSED              [ 94%]
+tests/test_unit.py::test_gate_logic PASSED                               [ 97%]
+tests/test_unit.py::test_index_weekday_year_correction PASSED            [100%]
+
+============================== 34 passed in 3.58s ==============================
