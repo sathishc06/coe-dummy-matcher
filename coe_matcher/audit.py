@@ -2,11 +2,15 @@
 import csv
 import os
 import zipfile
+import re
+import copy
+import shutil
 from collections import Counter, defaultdict
 
 from openpyxl import Workbook
+import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, column_index_from_string
 
 from .gate import REL_BLOCKED, REL_COMPLETE, REL_EXCL, REL_NA, REL_NONE, REL_PARTIAL
 from .models import (AMBIGUOUS, EXCLUDED, MATCHED_STATUSES, NOT_FOUND, VERIFIED, VERIFIED_ALT)
@@ -65,6 +69,152 @@ def summary_numbers(run):
                 wb_complete=rc[REL_COMPLETE], wb_partial=rc[REL_PARTIAL], wb_blocked=rc[REL_BLOCKED] + 0,
                 wb_none=rc[REL_NONE], wb_excluded=rc[REL_EXCL], wb_nostud=rc[REL_NA])
 
+
+
+
+def _dept_code_from_reg(reg_no, prefix="6176"):
+    """Extract the first 3 consecutive digits occurring after the registration prefix.
+    Example: 6176...101... -> 101. Returns UNKNOWN_DEPT when unavailable.
+    """
+    s = re.sub(r"\s+", "", str(reg_no or "")).upper()
+    pos = s.find(prefix)
+    if pos < 0:
+        return "UNKNOWN_DEPT"
+    tail = s[pos + len(prefix):]
+    m = re.search(r"(\d{3})", tail)
+    return m.group(1) if m else "UNKNOWN_DEPT"
+
+
+def _primary_subject_code(row, unit=None):
+    codes = re.findall(r"\d{3}[A-Z]{3}\d{2}", str(getattr(row, "subject_codes", "") or "").upper())
+    if codes:
+        return codes[0]
+    if unit and getattr(unit, "codes", None):
+        return str(unit.codes[0]).upper()
+    return "UNKNOWN_SUBJECT"
+
+
+def _copy_cell(src, dst, old_row=None, new_row=None):
+    dst.value = src.value
+    if isinstance(dst.value, str) and dst.value.startswith("=") and old_row is not None and new_row is not None:
+        # Row-only formula rewrite; columns are unchanged in the already processed workbook.
+        pattern = re.compile(r"(?<![A-Za-z0-9_$.!\"])(\$?[A-Z]{1,3})(\$?)(\d+)(?![A-Za-z0-9_(])")
+        def sub(m):
+            r = int(m.group(3))
+            return f"{m.group(1)}{m.group(2)}{new_row if r == old_row else r}"
+        dst.value = pattern.sub(sub, dst.value)
+    if src.has_style:
+        dst._style = copy.copy(src._style)
+    if src.number_format:
+        dst.number_format = src.number_format
+    if src.alignment:
+        dst.alignment = copy.copy(src.alignment)
+    if src.protection:
+        dst.protection = copy.copy(src.protection)
+    if src.hyperlink:
+        dst._hyperlink = copy.copy(src.hyperlink)
+    if src.comment:
+        dst.comment = copy.copy(src.comment)
+
+
+def _write_subject_dept_workbook(src_path, sheet_name, header_row, student_rows, out_path, subject_code, dept_code, source_rel):
+    """Create a clean subject+department Excel containing only selected verified student rows.
+    Header/title rows are preserved; student rows are compacted and formulas are row-adjusted.
+    """
+    src_wb = openpyxl.load_workbook(src_path)
+    src_ws = src_wb[sheet_name]
+    out_wb = Workbook()
+    out_ws = out_wb.active
+    out_ws.title = re.sub(r"[^A-Za-z0-9_ -]", "_", subject_code)[:31] or "Subject"
+    max_col = src_ws.max_column
+    # Preserve column widths and hidden state.
+    for key, dim in src_ws.column_dimensions.items():
+        out_ws.column_dimensions[key].width = dim.width
+        out_ws.column_dimensions[key].hidden = dim.hidden
+    # Copy title/header area.
+    for r in range(1, header_row + 1):
+        out_ws.row_dimensions[r].height = src_ws.row_dimensions[r].height
+        for c in range(1, max_col + 1):
+            _copy_cell(src_ws.cell(r, c), out_ws.cell(r, c))
+    # Compact selected student rows directly after the header.
+    for new_row, old_row in enumerate(student_rows, start=header_row + 1):
+        out_ws.row_dimensions[new_row].height = src_ws.row_dimensions[old_row].height
+        for c in range(1, max_col + 1):
+            _copy_cell(src_ws.cell(old_row, c), out_ws.cell(new_row, c), old_row, new_row)
+    # Copy only merges entirely inside the title/header area. Student-row merges are intentionally
+    # omitted to avoid carrying merges from excluded departments.
+    for m in list(src_ws.merged_cells.ranges):
+        if m.max_row <= header_row:
+            out_ws.merge_cells(str(m))
+    out_ws.freeze_panes = src_ws.freeze_panes if src_ws.freeze_panes and str(src_ws.freeze_panes).isdigit() is False else None
+    out_ws.auto_filter.ref = f"A{header_row}:{get_column_letter(max_col)}{header_row + len(student_rows)}"
+    out_ws.sheet_view.showGridLines = src_ws.sheet_view.showGridLines
+    # Release metadata makes the split provenance explicit.
+    meta = out_wb.create_sheet("Release Info")
+    meta.append(["Field", "Value"])
+    for cell in meta[1]:
+        cell.font = Font(bold=True)
+    meta_rows = [
+        ("Subject code", subject_code), ("Department code", dept_code),
+        ("Registration parsing rule", "First 3 consecutive digits after 6176 in Reg.No"),
+        ("Source valuation workbook", source_rel), ("Source worksheet", sheet_name),
+        ("Rows included", len(student_rows)), ("Release basis", "All included rows matched and passed independent verification"),
+    ]
+    for x in meta_rows:
+        meta.append(list(x))
+    meta.column_dimensions["A"].width = 30
+    meta.column_dimensions["B"].width = 100
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_wb.save(out_path)
+
+
+def build_subject_dept_release(run, out_dir):
+    """Build the requested usable release: exclude every non-COMPLETE workbook; split output by subject and dept.
+    No manual correction or second verification step is required here; only rows already classified COMPLETE_VERIFIED
+    by the existing independent verification stage are eligible.
+    """
+    base = os.path.join(out_dir, "OFFICIAL_USABLE_SUBJECTS")
+    shutil.rmtree(base, ignore_errors=True)
+    os.makedirs(base, exist_ok=True)
+    unit_map = {f"{u.wb_rel}::{u.sheet}": u for u in run.units}
+    groups = defaultdict(list)
+    for rel, (st, _) in run.wb_status.items():
+        if st != REL_COMPLETE or rel not in run.written:
+            continue
+        for r in run.results:
+            if r.wb_rel != rel or r.status not in MATCHED_STATUSES or r.verification != "PASS":
+                continue
+            u = unit_map.get(r.unit_key)
+            if not u:
+                continue
+            subject = _primary_subject_code(r, u)
+            dept = _dept_code_from_reg(r.reg_no)
+            groups[(subject, dept, rel, r.sheet)].append(r)
+    files = []
+    counters = Counter()
+    for (subject, dept, rel, sheet), rows in sorted(groups.items()):
+        u = unit_map.get(f"{rel}::{sheet}")
+        if not u:
+            continue
+        safe_subject = re.sub(r"[^A-Za-z0-9_-]", "_", subject)
+        safe_dept = re.sub(r"[^A-Za-z0-9_-]", "_", dept)
+        folder = os.path.join(base, safe_subject)
+        counters[(subject, dept)] += 1
+        suffix = f"_{counters[(subject, dept)]:02d}" if counters[(subject, dept)] > 1 else ""
+        out_path = os.path.join(folder, f"{safe_subject}_{safe_dept}{suffix}.xlsx")
+        _write_subject_dept_workbook(run.written[rel], sheet, u.header_row, [r.sheet_row for r in rows], out_path, subject, dept, rel)
+        files.append((out_path, subject, dept, len(rows)))
+    zip_path = os.path.join(out_dir, "USABLE_SUBJECT_DEPARTMENT_RELEASE.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("RELEASE_NOTE.txt",
+                   "USABLE SUBJECT/DEPARTMENT RELEASE\n\n"
+                   "Only workbooks classified COMPLETE_VERIFIED and rows independently verified as PASS are included.\n"
+                   "Subjects/workbooks with unresolved, ambiguous, blocked, excluded or unverified data are omitted.\n"
+                   "Department code = first 3 consecutive digits found after the 6176 prefix in the complete Reg.No.\n"
+                   "No manual correction/recheck is performed during this release packaging step.\n")
+        for p, subject, dept, n in files:
+            z.write(p, os.path.relpath(p, base))
+    return zip_path, files
 
 def write_all_outputs(run, out_dir):
     os.makedirs(out_dir, exist_ok=True)
@@ -197,6 +347,23 @@ def write_all_outputs(run, out_dir):
         for rel in complete:
             z.write(run.written[rel], rel)
     o["complete_zip"] = p
+    # User-authorized scoped release: only COMPLETE_VERIFIED workbooks.
+    # This is intentionally distinct from the strict overall gate. Any PARTIAL,
+    # BLOCKED or NO_OUTPUT workbook is excluded from this ZIP.
+    p = os.path.join(out_dir, "CORRECTED_WORKBOOKS_SCOPED_OFFICIAL_USE.zip")
+    with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("README.txt",
+                   "SCOPED OFFICIAL-USE RELEASE\n\n"
+                   "This ZIP contains ONLY workbooks classified COMPLETE_VERIFIED: every included student row was mapped and the output workbook passed independent verification.\n"
+                   "All workbooks that failed the overall strict release gate are intentionally excluded.\n"
+                   "This file must NOT be interpreted as evidence that the overall May 2026 reconciliation release gate passed.\n")
+        for rel in complete:
+            z.write(run.written[rel], rel)
+    o["scoped_official_zip"] = p
+    # Requested usable release: automatically excludes unusable workbooks and splits by subject/department.
+    p, release_files = build_subject_dept_release(run, out_dir)
+    o["usable_subject_department_zip"] = p
+    o["usable_subject_department_files"] = release_files
     p = os.path.join(out_dir, "CORRECTED_WORKBOOKS_PARTIAL_NOT_FOR_RELEASE.zip")
     with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.txt", NOT_APPROVED + "\nThese workbooks contain verified Reg.No values for matched rows only. "

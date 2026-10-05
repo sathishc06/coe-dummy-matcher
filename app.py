@@ -64,7 +64,7 @@ if page == PAGES[0]:
     dz = st.file_uploader("Daywise ZIP", type=["zip"])
     ix = st.file_uploader("Official Daywise date/session index (.xlsx) - optional if inside Daywise ZIP", type=["xlsx"])
     excl = st.text_input("Subject codes to EXCLUDE (comma separated)", "225PST02")
-    procs = st.slider("Worker processes", 1, 8, 4)
+    procs = st.slider("Worker processes", 1, 8, 1)
     if st.button("Validate and run reconciliation", type="primary", disabled=not (vz and dz)):
         wd = tempfile.mkdtemp(prefix="coe_")
         paths = dict(v=save_upload(vz, os.path.join(wd, "valuation.zip")), d=save_upload(dz, os.path.join(wd, "daywise.zip")),
@@ -128,17 +128,8 @@ elif page == PAGES[2]:
     d = {k: v for k, v in dup.items() if len(v) > 1}
     if d:
         st.warning("Duplicate subject codes with different subject names in the index: " + str(d))
-    st.subheader("Manual subject mapping (authorised users)")
-    pw = st.text_input("Authorisation password", type="password", key="pw3")
-    if ADMIN_PW and pw == ADMIN_PW:
-        uk = st.selectbox("Worksheet", list(df.unit_key) if len(df) else [])
-        codes = st.text_input("Official subject code(s), comma separated")
-        if st.button("Apply and re-run matching") and uk and codes:
-            S().subject_overrides[uk] = [c.strip() for c in codes.split(",")]
-            S().run = reprocess(run, S().procs, overrides=S().overrides, subject_overrides=S().subject_overrides)
-            st.success("Re-processed with manual subject mapping (flagged as alternate-source).")
-    else:
-        st.caption("Set COE_ADMIN_PASSWORD on the server to enable manual mapping.")
+    st.subheader("Automatic subject mapping only")
+    st.info("Manual subject mapping/recheck is disabled in this release build. Only automatically verified data is eligible for the usable release.")
 
 # ------------------------------------------------------------------ 4 progress
 elif page == PAGES[3]:
@@ -175,42 +166,13 @@ elif page in (PAGES[4], PAGES[5]):
 # ------------------------------------------------------------------ 7 conflicts
 elif page == PAGES[6]:
     run = require_run()
-    st.header("Conflict resolution (manual corrections)")
-    st.caption("Original source files are never modified. Every correction is logged with previous value, new value, "
-               "reason, evidence, timestamp and approval note.")
-    pw = st.text_input("Authorisation password", type="password", key="pw7")
-    if not (ADMIN_PW and pw == ADMIN_PW):
-        st.info("Authorised users only (server env COE_ADMIN_PASSWORD).")
-        st.stop()
-    user = st.text_input("Your name")
-    unresolved = [r for r in run.results if r.status in (AMBIGUOUS, NOT_FOUND)]
-    st.write(f"{len(unresolved):,} unresolved rows")
-    wbsel = st.selectbox("Workbook", sorted({r.wb_rel for r in unresolved}))
-    rr_opts = [r for r in unresolved if r.wb_rel == wbsel][:500]
-    pick = st.selectbox("Row", rr_opts, format_func=lambda r: f"{r.sheet} row {r.sheet_row} dummy {r.dummy_key} [{r.status}]")
-    if pick:
-        st.write("Current reason:", pick.reason)
-        cands = candidates_for(run, pick)
-        if not cands:
-            st.error("No source record carries this dummy number - nothing can be selected.")
-        else:
-            cd = pd.DataFrame(cands)
-            st.dataframe(cd)
-            i = st.selectbox("Select source record", range(len(cands)),
-                             format_func=lambda i: f"{cands[i]['source_file']} #{cands[i]['row']} -> {cands[i]['reg']} ({cands[i]['subject_codes']})")
-            reason, ev, note = st.text_area("Reason"), st.text_area("Source evidence"), st.text_area("Approval note")
-            if st.button("Record correction and re-run"):
-                if not (reason.strip() and ev.strip() and note.strip() and user.strip()):
-                    st.error("Reason, evidence, approval note and your name are all required.")
-                else:
-                    c = cands[i]
-                    S().overrides.append(Override(pick.unit_key, pick.sheet_row, c["source_file"], c["row"], reason, ev, note, user))
-                    S().run = reprocess(run, S().procs, overrides=S().overrides, subject_overrides=S().subject_overrides)
-                    st.success("Correction applied (status: Verified alternate source, flagged MANUAL_OVERRIDE).")
-    if getattr(run, "manual_log", None):
-        st.subheader("Correction log")
-        st.dataframe(pd.DataFrame(run.manual_log)[LOG_FIELDS])
-        st.download_button("Download correction log", log_to_csv(run.manual_log).encode("utf-8-sig"), "manual_corrections_log.csv")
+    st.header("Conflict / exception review")
+    st.info("Manual correction and manual re-check are disabled. Conflicts remain excluded from the usable release until authoritative source data is supplied in a future run.")
+    unresolved = [r for r in run.results if r.status in (AMBIGUOUS, NOT_FOUND, PROC_ERROR)]
+    st.write(f"{len(unresolved):,} unresolved rows are excluded from the usable release.")
+    if unresolved:
+        st.dataframe(pd.DataFrame([dict(workbook=r.wb_rel, sheet=r.sheet, row=r.sheet_row, dummy=r.dummy_key,
+                                        status=r.status, reason=r.reason, flags=", ".join(r.flags), subject=r.subject_codes) for r in unresolved]).head(5000), height=500)
 
 # ------------------------------------------------------------------ 8 verification
 elif page == PAGES[7]:
@@ -241,9 +203,15 @@ elif page == PAGES[8]:
         if key in o and os.path.exists(o[key]):
             st.download_button(label, open(o[key], "rb").read(), os.path.basename(o[key]), mime)
     if gate["passed"]:
-        dl("⬇ Official corrected workbooks ZIP", "official_zip", "application/zip")
+        dl("⬇ Download official corrected workbooks ZIP", "official_zip", "application/zip")
     else:
-        st.warning("Official ZIP blocked by the strict release gate.")
+        st.warning("Overall gate failed. Unusable subjects/workbooks are excluded automatically; no manual re-check is required for the usable release.")
+
+    st.markdown("### Usable subject + department release")
+    st.caption("This package contains only COMPLETE_VERIFIED workbooks/rows. Unresolved, ambiguous, blocked, excluded and unverified subjects are omitted automatically. No manual correction or second re-check is required at download time.")
+    dl("⬇ DOWNLOAD USABLE DATA — SUBJECT/DEPARTMENT EXCEL ZIP", "usable_subject_department_zip", "application/zip")
+    if "usable_subject_department_files" in o:
+        st.write(f"Prepared {len(o['usable_subject_department_files']):,} subject/department Excel file(s).")
     dl("Audit workbook (FINAL_RECONCILIATION_AUDIT.xlsx)", "audit_xlsx", "application/vnd.ms-excel")
     dl("All student rows CSV", "csv", "text/csv")
     dl("Exception report CSV", "exceptions_csv", "text/csv")

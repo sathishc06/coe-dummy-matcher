@@ -56,3 +56,17 @@ is blocked, or could not be written.
 
 ## Known limitations
 See TEST_REPORT.md ("Not tested / incomplete").
+
+## Usable subject/department release
+
+The release page automatically creates `USABLE_SUBJECT_DEPARTMENT_RELEASE.zip`. It includes only rows from workbooks classified `COMPLETE_VERIFIED` and independently verified as PASS. Unresolved, ambiguous, blocked, excluded, and unverified subjects/workbooks are omitted automatically.
+
+Output layout inside the ZIP:
+
+```text
+OFFICIAL_USABLE_SUBJECTS/
+  <SUBJECT_CODE>/
+    <SUBJECT_CODE>_<DEPT_CODE>.xlsx
+```
+
+The department code is derived from the complete `Reg.No` by taking the first three consecutive digits occurring after the `6176` prefix. Example: a registration containing `6176...101...` is grouped under department code `101`. Each department gets a separate Excel file. No manual correction or second manual re-check is performed during release packaging.
