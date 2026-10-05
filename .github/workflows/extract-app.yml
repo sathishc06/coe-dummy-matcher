@@ -1,0 +1,52 @@
+name: Extract COE App
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check ZIP
+        id: check
+        run: |
+          if [ -f "COE_Dummy_Matcher_GitHub_Ready.zip" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract application
+        if: steps.check.outputs.found == 'true'
+        run: |
+          mkdir -p /tmp/coe_app
+          unzip -o "COE_Dummy_Matcher_GitHub_Ready.zip" -d /tmp/coe_app
+
+          cp -r /tmp/coe_app/. .
+
+          rm -f "COE_Dummy_Matcher_GitHub_Ready.zip"
+
+      - name: Commit extracted files
+        if: steps.check.outputs.found == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "Extract COE Dummy Matcher application"
+            git push
+          fi
