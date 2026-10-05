@@ -87,9 +87,16 @@ def _write_one(args):
     return rel, ok, msg, {k: {"n_matched": v["n_matched"], "n_unmatched": v["n_unmatched"]} for k, v in info.items()}
 
 
+def _init_verify_worker(evidence):
+    # Streamlit Cloud can use a multiprocessing start method where module globals
+    # are not inherited.  Initialise the worker explicitly so verification never
+    # depends on _G["evidence"] already existing in the child process.
+    _G["evidence"] = evidence
+
+
 def _verify_one(args):
     rel, ap, out, sheets_info = args
-    return rel, verify_workbook(ap, out, sheets_info, _G["evidence"])
+    return rel, verify_workbook(ap, out, sheets_info, _G.get("evidence", {}))
 
 
 def run_reconciliation(val_zip: str, day_zip: str, index_xlsx: str, workdir: str, excluded=EXCLUDED_DEFAULT,
@@ -211,8 +218,11 @@ def reprocess(run: "Run", processes: int = 4, progress=None, overrides=None, sub
                                         expected_matched=sum(1 for r in rows if r.status in MATCHED_STATUSES),
                                         n_student_rows=len(u.student_rows)))
         vjobs.append((rel, by_wb[rel][0].wb_abs, outp, sheets_info))
-    if processes > 1:
-        with Pool(processes) as pool:
+    if processes > 1 and vjobs:
+        # Explicitly initialise each verification worker with the evidence map.
+        # Without this, Streamlit Cloud/Python multiprocessing may start a fresh
+        # interpreter and _G["evidence"] is absent, producing KeyError('evidence').
+        with Pool(processes, initializer=_init_verify_worker, initargs=(_G["evidence"],)) as pool:
             vres = pool.map(_verify_one, vjobs, chunksize=2)
     else:
         vres = [_verify_one(j) for j in vjobs]
